@@ -66,13 +66,13 @@ class Statement extends Node {
 class Function extends Statement {
     constructor(name, args, returnType, body, startLine, endLine) {
         super();
-        this.calls = new Set();
         this.name = name;
         this.args = args;
         this.returnType = returnType;
         this.body = body;
         this.startLine = startLine;
         this.endLine = endLine;
+        this.calls = new Set();
     }
     get astNodeType() {
         return "function";
@@ -1262,6 +1262,7 @@ TokenTypes.keywords = {
     texture_depth_cube_array: new TokenType("texture_depth_cube_array", TokenClass.keyword, "texture_depth_cube_array"),
     texture_depth_multisampled_2d: new TokenType("texture_depth_multisampled_2d", TokenClass.keyword, "texture_depth_multisampled_2d"),
     texture_external: new TokenType("texture_external", TokenClass.keyword, "texture_external"),
+    input_attachment: new TokenType("input_attachment", TokenClass.keyword, "input_attachment"),
     u32: new TokenType("u32", TokenClass.keyword, "u32"),
     vec2: new TokenType("vec2", TokenClass.keyword, "vec2"),
     vec3: new TokenType("vec3", TokenClass.keyword, "vec3"),
@@ -1495,12 +1496,16 @@ TokenTypes.depth_texture_type = [
     _a.keywords.texture_depth_cube_array,
     _a.keywords.texture_depth_multisampled_2d,
 ];
+TokenTypes.input_attachment_type = [
+    _a.keywords.input_attachment
+];
 TokenTypes.texture_external_type = [_a.keywords.texture_external];
 TokenTypes.any_texture_type = [
     ..._a.sampled_texture_type,
     ..._a.multisampled_texture_type,
     ..._a.storage_texture_type,
     ..._a.depth_texture_type,
+    ..._a.input_attachment_type,
     ..._a.texture_external_type,
 ];
 TokenTypes.texel_format = [

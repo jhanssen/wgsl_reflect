@@ -145,6 +145,11 @@ export class TokenTypes {
       TokenClass.keyword,
       "texture_external"
     ),
+    input_attachment: new TokenType(
+      "input_attachment",
+      TokenClass.keyword,
+      "input_attachment"
+    ),
     u32: new TokenType("u32", TokenClass.keyword, "u32"),
     vec2: new TokenType("vec2", TokenClass.keyword, "vec2"),
     vec3: new TokenType("vec3", TokenClass.keyword, "vec3"),
@@ -451,6 +456,10 @@ export class TokenTypes {
     this.keywords.texture_depth_multisampled_2d,
   ];
 
+  static readonly input_attachment_type = [
+    this.keywords.input_attachment
+  ];
+
   static readonly texture_external_type = [this.keywords.texture_external];
 
   static readonly any_texture_type = [
@@ -458,6 +467,7 @@ export class TokenTypes {
     ...this.multisampled_texture_type,
     ...this.storage_texture_type,
     ...this.depth_texture_type,
+    ...this.input_attachment_type,
     ...this.texture_external_type,
   ];
 

@@ -64,12 +64,15 @@ export class Statement extends Node {
  * @category AST
  */
 export class Function extends Statement {
-    constructor(name, args, returnType, body) {
+    constructor(name, args, returnType, body, startLine, endLine) {
         super();
         this.name = name;
         this.args = args;
         this.returnType = returnType;
         this.body = body;
+        this.startLine = startLine;
+        this.endLine = endLine;
+        this.calls = new Set();
     }
     get astNodeType() {
         return "function";
@@ -217,6 +220,7 @@ export class Let extends Statement {
     }
     search(callback) {
         var _a;
+        callback(this);
         (_a = this.value) === null || _a === void 0 ? void 0 : _a.search(callback);
     }
 }
@@ -242,6 +246,7 @@ export class Const extends Statement {
     }
     search(callback) {
         var _a;
+        callback(this);
         (_a = this.value) === null || _a === void 0 ? void 0 : _a.search(callback);
     }
 }
@@ -318,6 +323,7 @@ export class Assign extends Statement {
         return "assign";
     }
     search(callback) {
+        this.variable.search(callback);
         this.value.search(callback);
     }
 }
@@ -334,6 +340,12 @@ export class Call extends Statement {
     }
     get astNodeType() {
         return "call";
+    }
+    search(callback) {
+        for (const node of this.args) {
+            node.search(callback);
+        }
+        callback(this);
     }
 }
 /**
@@ -419,6 +431,20 @@ export class Enable extends Statement {
     }
     get astNodeType() {
         return "enable";
+    }
+}
+/**
+ * @class Requires
+ * @extends Statement
+ * @category AST
+ */
+export class Requires extends Statement {
+    constructor(extensions) {
+        super();
+        this.extensions = extensions;
+    }
+    get astNodeType() {
+        return "requires";
     }
 }
 /**
@@ -516,9 +542,11 @@ export class Type extends Statement {
  * @category AST
  */
 export class Struct extends Type {
-    constructor(name, members) {
+    constructor(name, members, startLine, endLine) {
         super(name);
         this.members = members;
+        this.startLine = startLine;
+        this.endLine = endLine;
     }
     get astNodeType() {
         return "struct";
@@ -643,6 +671,12 @@ export class CreateExpr extends Expression {
     }
     get astNodeType() {
         return "createExpr";
+    }
+    search(callback) {
+        callback(this);
+        for (const node of this.args) {
+            node.search(callback);
+        }
     }
 }
 /**
@@ -786,6 +820,9 @@ export class VariableExpr extends Expression {
     }
     search(callback) {
         callback(this);
+        if (this.postfix) {
+            this.postfix.search(callback);
+        }
     }
     evaluate(context) {
         const constant = context.constants.get(this.name);
@@ -903,6 +940,20 @@ export class GroupingExpr extends Expression {
     }
     search(callback) {
         this.searchBlock(this.contents, callback);
+    }
+}
+/**
+ * @class ArrayIndex
+ * @extends Expression
+ * @category AST
+ */
+export class ArrayIndex extends Expression {
+    constructor(index) {
+        super();
+        this.index = index;
+    }
+    search(callback) {
+        this.index.search(callback);
     }
 }
 /**

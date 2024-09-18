@@ -79,7 +79,7 @@ export class Function extends Statement {
   attributes: Array<Attribute> | null;
   startLine: number;
   endLine: number;
-  calls: Set<Function> = new Set();
+  calls: Set<Function>;
 
   constructor(
     name: string,
@@ -96,6 +96,7 @@ export class Function extends Statement {
     this.body = body;
     this.startLine = startLine;
     this.endLine = endLine;
+    this.calls = new Set();
   }
 
   get astNodeType(): string {

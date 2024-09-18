@@ -62,6 +62,9 @@ export class StructInfo extends TypeInfo {
         super(name, attributes);
         this.members = [];
         this.align = 0;
+        this.startLine = -1;
+        this.endLine = -1;
+        this.inUse = false;
     }
     get isStruct() {
         return true;
@@ -172,6 +175,10 @@ export class FunctionInfo {
         this.inputs = [];
         this.outputs = [];
         this.resources = [];
+        this.startLine = -1;
+        this.endLine = -1;
+        this.inUse = false;
+        this.calls = new Set();
         this.name = name;
         this.stage = stage;
     }
@@ -194,6 +201,8 @@ export class OverrideInfo {
 class _FunctionResources {
     constructor(node) {
         this.resources = null;
+        this.inUse = false;
+        this.info = null;
         this.node = node;
     }
 }
@@ -215,6 +224,8 @@ export class WgslReflect {
         this.structs = [];
         /// All entry functions in the shader: vertex, fragment, and/or compute.
         this.entry = new EntryFunctions();
+        /// All functions in the shader, including entry functions.
+        this.functions = [];
         this._types = new Map();
         this._functions = new Map();
         if (code) {
@@ -241,8 +252,9 @@ export class WgslReflect {
                 if (info instanceof StructInfo) {
                     this.structs.push(info);
                 }
-                continue;
             }
+        }
+        for (const node of ast) {
             if (node instanceof AST.Alias) {
                 this.aliases.push(this._getAliasInfo(node));
                 continue;
@@ -302,14 +314,61 @@ export class WgslReflect {
                 const fragmentStage = this._getAttribute(node, "fragment");
                 const computeStage = this._getAttribute(node, "compute");
                 const stage = vertexStage || fragmentStage || computeStage;
+                const fn = new FunctionInfo(node.name, stage === null || stage === void 0 ? void 0 : stage.name);
+                fn.startLine = node.startLine;
+                fn.endLine = node.endLine;
+                this.functions.push(fn);
+                this._functions.get(node.name).info = fn;
                 if (stage) {
-                    const fn = new FunctionInfo(node.name, stage === null || stage === void 0 ? void 0 : stage.name);
+                    this._functions.get(node.name).inUse = true;
+                    fn.inUse = true;
+                    fn.resources = this._findResources(node, !!stage);
                     fn.inputs = this._getInputs(node.args);
                     fn.outputs = this._getOutputs(node.returnType);
-                    fn.resources = this._findResources(node);
                     this.entry[stage.name].push(fn);
                 }
                 continue;
+            }
+        }
+        for (const fn of this._functions.values()) {
+            if (fn.info) {
+                fn.info.inUse = fn.inUse;
+                this._addCalls(fn.node, fn.info.calls);
+            }
+        }
+        for (const u of this.uniforms) {
+            this._markStructsInUse(u.type);
+        }
+        for (const s of this.storage) {
+            this._markStructsInUse(s.type);
+        }
+    }
+    _markStructsInUse(type) {
+        if (type.isStruct) {
+            type.inUse = true;
+            for (const m of type.members) {
+                this._markStructsInUse(m.type);
+            }
+        }
+        else if (type.isArray) {
+            this._markStructsInUse(type.format);
+        }
+        else if (type.isTemplate) {
+            this._markStructsInUse(type.format);
+        }
+        else {
+            const alias = this._getAlias(type.name);
+            if (alias) {
+                this._markStructsInUse(alias);
+            }
+        }
+    }
+    _addCalls(fn, calls) {
+        var _a;
+        for (const call of fn.calls) {
+            const info = (_a = this._functions.get(call.name)) === null || _a === void 0 ? void 0 : _a.info;
+            if (info) {
+                calls.add(info);
             }
         }
     }
@@ -360,7 +419,11 @@ export class WgslReflect {
         }
         return null;
     }
-    _findResources(fn) {
+    _markStructsFromAST(type) {
+        const info = this._getTypeInfo(type, null);
+        this._markStructsInUse(info);
+    }
+    _findResources(fn, isEntry) {
         const resources = [];
         const self = this;
         const varStack = [];
@@ -372,14 +435,26 @@ export class WgslReflect {
                 varStack.pop();
             }
             else if (node instanceof AST.Var) {
+                const v = node;
+                if (isEntry && v.type !== null) {
+                    this._markStructsFromAST(v.type);
+                }
                 if (varStack.length > 0) {
-                    const v = node;
                     varStack[varStack.length - 1][v.name] = v;
                 }
             }
+            else if (node instanceof AST.CreateExpr) {
+                const c = node;
+                if (isEntry && c.type !== null) {
+                    this._markStructsFromAST(c.type);
+                }
+            }
             else if (node instanceof AST.Let) {
+                const v = node;
+                if (isEntry && v.type !== null) {
+                    this._markStructsFromAST(v.type);
+                }
                 if (varStack.length > 0) {
-                    const v = node;
                     varStack[varStack.length - 1][v.name] = v;
                 }
             }
@@ -400,12 +475,30 @@ export class WgslReflect {
             }
             else if (node instanceof AST.CallExpr) {
                 const c = node;
-                const fn = self._functions.get(c.name);
-                if (fn) {
-                    if (fn.resources === null) {
-                        fn.resources = self._findResources(fn.node);
+                const callFn = self._functions.get(c.name);
+                if (callFn) {
+                    if (isEntry) {
+                        callFn.inUse = true;
                     }
-                    resources.push(...fn.resources);
+                    fn.calls.add(callFn.node);
+                    if (callFn.resources === null) {
+                        callFn.resources = self._findResources(callFn.node, isEntry);
+                    }
+                    resources.push(...callFn.resources);
+                }
+            }
+            else if (node instanceof AST.Call) {
+                const c = node;
+                const callFn = self._functions.get(c.name);
+                if (callFn) {
+                    if (isEntry) {
+                        callFn.inUse = true;
+                    }
+                    fn.calls.add(callFn.node);
+                    if (callFn.resources === null) {
+                        callFn.resources = self._findResources(callFn.node, isEntry);
+                    }
+                    resources.push(...callFn.resources);
                 }
             }
         });
@@ -414,12 +507,15 @@ export class WgslReflect {
     getBindGroups() {
         const groups = [];
         function _makeRoom(group, binding) {
-            if (group >= groups.length)
+            if (group >= groups.length) {
                 groups.length = group + 1;
-            if (groups[group] === undefined)
+            }
+            if (groups[group] === undefined) {
                 groups[group] = [];
-            if (binding >= groups[group].length)
+            }
+            if (binding >= groups[group].length) {
                 groups[group].length = binding + 1;
+            }
         }
         for (const u of this.uniforms) {
             _makeRoom(u.group, u.binding);
@@ -444,15 +540,17 @@ export class WgslReflect {
         return groups;
     }
     _getOutputs(type, outputs = undefined) {
-        if (outputs === undefined)
+        if (outputs === undefined) {
             outputs = [];
+        }
         if (type instanceof AST.Struct) {
             this._getStructOutputs(type, outputs);
         }
         else {
             const output = this._getOutputInfo(type);
-            if (output !== null)
+            if (output !== null) {
                 outputs.push(output);
+            }
         }
         return outputs;
     }
@@ -484,16 +582,18 @@ export class WgslReflect {
         return null;
     }
     _getInputs(args, inputs = undefined) {
-        if (inputs === undefined)
+        if (inputs === undefined) {
             inputs = [];
+        }
         for (const arg of args) {
             if (arg.type instanceof AST.Struct) {
                 this._getStructInputs(arg.type, inputs);
             }
             else {
                 const input = this._getInputInfo(arg);
-                if (input !== null)
+                if (input !== null) {
                     inputs.push(input);
+                }
             }
         }
         return inputs;
@@ -505,8 +605,9 @@ export class WgslReflect {
             }
             else {
                 const input = this._getInputInfo(m);
-                if (input !== null)
+                if (input !== null) {
                     inputs.push(input);
+                }
             }
         }
     }
@@ -540,8 +641,9 @@ export class WgslReflect {
     }
     _getAlias(name) {
         for (const a of this.aliases) {
-            if (a.name == name)
+            if (a.name == name) {
                 return a.type;
+            }
         }
         return null;
     }
@@ -565,6 +667,8 @@ export class WgslReflect {
         if (type instanceof AST.Struct) {
             const s = type;
             const info = new StructInfo(s.name, attributes);
+            info.startLine = s.startLine;
+            info.endLine = s.endLine;
             for (const m of s.members) {
                 const t = this._getTypeInfo(m.type, m.attributes);
                 info.members.push(new MemberInfo(m.name, t, m.attributes));
@@ -621,8 +725,9 @@ export class WgslReflect {
         for (let mi = 0, ml = struct.members.length; mi < ml; ++mi) {
             const member = struct.members[mi];
             const sizeInfo = this._getTypeSize(member);
-            if (!sizeInfo)
+            if (!sizeInfo) {
                 continue;
+            }
             const type = (_a = this._getAlias(member.type.name)) !== null && _a !== void 0 ? _a : member.type;
             const align = sizeInfo.align;
             const size = sizeInfo.size;
@@ -638,13 +743,15 @@ export class WgslReflect {
         struct.align = structAlign;
     }
     _getTypeSize(type) {
-        var _a;
-        if (type === null || type === undefined)
+        var _a, _b;
+        if (type === null || type === undefined) {
             return null;
+        }
         const explicitSize = this._getAttributeNum(type.attributes, "size", 0);
         const explicitAlign = this._getAttributeNum(type.attributes, "align", 0);
-        if (type instanceof MemberInfo)
+        if (type instanceof MemberInfo) {
             type = type.type;
+        }
         if (type instanceof TypeInfo) {
             const alias = this._getAlias(type.name);
             if (alias !== null) {
@@ -654,7 +761,7 @@ export class WgslReflect {
         {
             const info = WgslReflect._typeInfo[type.name];
             if (info !== undefined) {
-                const divisor = type["format"] === "f16" ? 2 : 1;
+                const divisor = ((_a = type["format"]) === null || _a === void 0 ? void 0 : _a.name) === "f16" ? 2 : 1;
                 return new _TypeSize(Math.max(explicitAlign, info.align / divisor), Math.max(explicitSize, info.size / divisor));
             }
         }
@@ -685,10 +792,11 @@ export class WgslReflect {
                 align = E.align;
             }
             const N = arrayType.count;
-            const stride = this._getAttributeNum((_a = type === null || type === void 0 ? void 0 : type.attributes) !== null && _a !== void 0 ? _a : null, "stride", this._roundUp(align, size));
+            const stride = this._getAttributeNum((_b = type === null || type === void 0 ? void 0 : type.attributes) !== null && _b !== void 0 ? _b : null, "stride", this._roundUp(align, size));
             size = N * stride;
-            if (explicitSize)
+            if (explicitSize) {
                 size = explicitSize;
+            }
             return new _TypeSize(Math.max(explicitAlign, align), Math.max(explicitSize, size));
         }
         if (type instanceof StructInfo) {
@@ -732,18 +840,21 @@ export class WgslReflect {
     }
     _getAttribute(node, name) {
         const obj = node;
-        if (!obj || !obj["attributes"])
+        if (!obj || !obj["attributes"]) {
             return null;
+        }
         const attrs = obj["attributes"];
         for (let a of attrs) {
-            if (a.name == name)
+            if (a.name == name) {
                 return a;
+            }
         }
         return null;
     }
     _getAttributeNum(attributes, name, defaultValue) {
-        if (attributes === null)
+        if (attributes === null) {
             return defaultValue;
+        }
         for (let a of attributes) {
             if (a.name == name) {
                 let v = a !== null && a.value !== null ? a.value : defaultValue;
